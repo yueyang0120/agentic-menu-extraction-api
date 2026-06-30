@@ -18,16 +18,31 @@ from dotenv import load_dotenv
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+load_dotenv()
+
+APP_VERSION = "1.0.3"
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o")
+BACKEND_API_SECRET = os.getenv("BACKEND_API_SECRET")
+MAX_OUTPUT_TOKENS = int(os.getenv("MAX_OUTPUT_TOKENS", "16000"))
+AUTH_WINDOW_SECONDS = int(os.getenv("AUTH_WINDOW_SECONDS", "300"))
+MASTER_SECRET = os.getenv("MASTER_SECRET")
+ALLOWED_ORIGINS = [
+    origin.strip()
+    for origin in os.getenv("ALLOWED_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000").split(",")
+    if origin.strip()
+]
+
 app = FastAPI(
     title="Agentic Menu Extraction API",
     description="Vision-based agentic extraction service for menu translation, dietary metadata, and mobile-ready structured output.",
-    version="1.0.3",
+    version=APP_VERSION,
 )
 
-# CORS middleware for your iOS app
+# CORS middleware for web/mobile clients that call through browser contexts.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # In production, specify your app's domains
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -36,22 +51,21 @@ app.add_middleware(
 # Security
 security = HTTPBearer()
 
-load_dotenv()
+_openai_client: Optional[OpenAI] = None
 
-# Environment variables (secure API key storage)
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-BACKEND_API_SECRET = os.getenv("BACKEND_API_SECRET", "your-secret-key")
-MAX_OUTPUT_TOKENS = int(os.getenv("MAX_OUTPUT_TOKENS", "16000"))
 
-# Dynamic auth configuration
-AUTH_WINDOW_SECONDS = int(os.getenv("AUTH_WINDOW_SECONDS", "300"))  # 5 minutes
-MASTER_SECRET = os.getenv("MASTER_SECRET", "menu-scanner-hmac-key-2024")  # Should be changed in production
+def get_openai_client() -> OpenAI:
+    """Create the OpenAI client only when image analysis is requested."""
+    global _openai_client
 
-if not OPENAI_API_KEY:
-    raise ValueError("Missing OPENAI_API_KEY in environment variables")
+    if _openai_client is not None:
+        return _openai_client
 
-# Initialize OpenAI client
-openai_client = OpenAI(api_key=OPENAI_API_KEY)
+    if not OPENAI_API_KEY:
+        raise HTTPException(status_code=500, detail="OPENAI_API_KEY is not configured")
+
+    _openai_client = OpenAI(api_key=OPENAI_API_KEY)
+    return _openai_client
 
 # Device storage management
 class DeviceStorage:
@@ -92,7 +106,7 @@ class DeviceStorage:
                 conn.execute("ALTER TABLE device_secrets RENAME COLUMN device_secret_hash TO device_secret_b64")
                 conn.commit()
                 logger.info("✅ Migrated database column: device_secret_hash -> device_secret_b64")
-            except:
+            except sqlite3.OperationalError:
                 # Column already renamed or doesn't exist
                 pass
             conn.commit()
@@ -430,7 +444,11 @@ async def verify_dynamic_auth(
     """Verify HMAC-based dynamic authentication"""
     
     # Check if it's using old static token (temporary backward compatibility)
-    if authorization.startswith("Bearer ") and authorization.replace("Bearer ", "") == BACKEND_API_SECRET:
+    if (
+        BACKEND_API_SECRET
+        and authorization.startswith("Bearer ")
+        and authorization.replace("Bearer ", "") == BACKEND_API_SECRET
+    ):
         logger.warning("⚠️ Using deprecated static token authentication")
         return "legacy_auth"
     
@@ -494,6 +512,9 @@ async def verify_dynamic_auth(
 # Legacy authentication (for backward compatibility)
 async def verify_token(credentials: HTTPAuthorizationCredentials = Security(security)):
     """Legacy token verification - deprecated"""
+    if not BACKEND_API_SECRET:
+        raise HTTPException(status_code=401, detail="Legacy token authentication is disabled")
+
     if credentials.credentials != BACKEND_API_SECRET:
         raise HTTPException(status_code=401, detail="Invalid authentication token")
     return credentials.credentials
@@ -504,15 +525,21 @@ async def health_check():
     return HealthResponse(
         status="healthy",
         timestamp=time.time(),
-        version="1.0.0"
+        version=APP_VERSION
     )
 
 # Device registration endpoint
 @app.post("/auth/register", response_model=DeviceRegistrationResponse)
-async def register_device(request: DeviceRegistrationRequest):
+async def register_device(
+    request: DeviceRegistrationRequest,
+    x_registration_secret: Annotated[Optional[str], Header()] = None,
+):
     """Register a new device with its secret key"""
     
     logger.info(f"🔐 Device registration request: {request.device_id}")
+
+    if MASTER_SECRET and not hmac.compare_digest(x_registration_secret or "", MASTER_SECRET):
+        raise HTTPException(status_code=401, detail="Invalid registration secret")
     
     # Validate device_id format (should be UUID)
     if not request.device_id or len(request.device_id) < 10:
@@ -569,6 +596,7 @@ async def analyze_menu(
         
         logger.info(f"Using target language: {target_lang}")
         logger.info(f"Max output tokens: {MAX_OUTPUT_TOKENS}")
+        openai_client = get_openai_client()
         
         # Enhanced system prompt with strict target-language enforcement
         system_prompt = f"""
@@ -622,7 +650,7 @@ async def analyze_menu(
         logger.info("Starting GPT-4o analysis with structured output (Chat Completions)")
 
         response = openai_client.responses.parse(
-            model="gpt-4o",
+            model=OPENAI_MODEL,
             input=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": [

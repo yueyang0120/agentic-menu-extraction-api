@@ -4,6 +4,16 @@ FastAPI service for agentic menu extraction from real-world menu photos. The API
 
 This project is the backend layer for a practical AI product: image input -> agentic extraction -> multilingual enrichment -> authenticated mobile API.
 
+## At a Glance
+
+| Area | Implementation signal |
+| --- | --- |
+| Product problem | Convert messy real-world menu photos into structured, localized food metadata. |
+| Agentic workflow | Vision extraction, target-language enforcement, schema validation, and enrichment in one API path. |
+| API layer | FastAPI endpoint with Pydantic contracts for request, response, and menu-item schema. |
+| Security | Device registration, per-device secrets, timestamped HMAC request signing, and optional registration guard. |
+| FDE relevance | Shows how to turn an ambiguous customer-facing workflow into a deployable API contract for a mobile product. |
+
 ## Product Use Case
 
 Travelers and diners often face menus in unfamiliar languages or formats. A useful assistant needs to do more than OCR the dish names. It should identify menu items, preserve original names, translate descriptions, infer common ingredients and allergens, and return data in a shape that a mobile app can display immediately.
@@ -27,6 +37,15 @@ Agentic Menu Extraction API focuses on that backend problem:
 - HMAC-based request verification with timestamp windows to reduce replay risk.
 - SQLite for local device-secret storage and PostgreSQL support through `DATABASE_URL`.
 - Railway-friendly deployment configuration.
+
+## Review Guide
+
+If you are scanning this repository, the most relevant implementation areas are:
+
+- `app.py`: FastAPI app, typed schemas, language normalization, HMAC verification, and structured OpenAI vision call.
+- `.env.example`: runtime configuration surface for model, auth, CORS, token limits, and database choice.
+- `tests/test_app.py`: smoke tests for health checks, OpenAPI surface, and language mapping.
+- `railway.json`: deployment entry point for a hosted API service.
 
 ## API Surface
 
@@ -61,20 +80,24 @@ The preferred authentication path uses timestamped HMAC headers:
 
 Each device registers a device-specific secret. Requests are signed with that secret and validated inside a configurable timestamp window (`AUTH_WINDOW_SECONDS`). A legacy bearer-token path remains for backward compatibility, but the dynamic device-auth path is the intended model.
 
+Device registration can be protected with `MASTER_SECRET`. When this value is configured, clients must include `X-Registration-Secret` on `POST /auth/register`. The legacy static bearer-token path is disabled unless `BACKEND_API_SECRET` is explicitly configured.
+
 ## Configuration
 
 Set these values in a local `.env` file or deployment secret manager. Do not commit real secrets.
 
 ```env
 OPENAI_API_KEY=...
+OPENAI_MODEL=gpt-4o
 BACKEND_API_SECRET=...
 MASTER_SECRET=...
 AUTH_WINDOW_SECONDS=300
 MAX_OUTPUT_TOKENS=16000
+ALLOWED_ORIGINS=http://localhost:3000,http://127.0.0.1:3000
 DATABASE_URL=...
 ```
 
-`DATABASE_URL` is optional. Without it, the service uses local SQLite (`devices.db`) for device registration.
+You can also copy `.env.example` and fill in local values. `OPENAI_API_KEY` is required only for image analysis; health checks and OpenAPI docs can load without it. `DATABASE_URL` is optional. Without it, the service uses local SQLite (`devices.db`) for device registration.
 
 ## Local Development
 
@@ -89,6 +112,18 @@ Then open:
 
 ```text
 http://127.0.0.1:8000/health
+```
+
+Open the API docs:
+
+```text
+http://127.0.0.1:8000/docs
+```
+
+Run tests:
+
+```bash
+pytest -q
 ```
 
 ## Portfolio Positioning

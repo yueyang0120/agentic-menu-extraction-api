@@ -19,8 +19,8 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 app = FastAPI(
-    title="Menu Intelligence API",
-    description="Vision-based menu understanding service for structured extraction, translation, and dietary metadata.",
+    title="Agentic Menu Extraction API",
+    description="Vision-based agentic extraction service for menu translation, dietary metadata, and mobile-ready structured output.",
     version="1.0.3",
 )
 

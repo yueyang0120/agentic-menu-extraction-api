@@ -1,0 +1,21 @@
+[tool.poetry]
+name = "menu-scanner-backend"
+version = "0.1.0"
+description = ""
+authors = ["Yang Yue <yuehyang510@gmail.com>"]
+readme = "README.md"
+packages = [{include = "menu_scanner_backend"}]
+
+[tool.poetry.dependencies]
+python = "^3.10"
+fastapi = "^0.116.1"
+uvicorn = "^0.35.0"
+openai = "^1.100.2"
+python-multipart = "^0.0.20"
+pydantic = "^2.11.7"
+python-dotenv = "^1.1.1"
+
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
